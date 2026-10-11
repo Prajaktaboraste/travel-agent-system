@@ -1,104 +1,316 @@
 # Travel Multi-Agent System
 
-An agentic-AI travel project built from the manager's brief: **at least two agents**, a **City Master table**,
-**RAG + MCP**, an **email agent triggered by new cities**, **stateful and stateless** chat,
-**synchronous and asynchronous APIs**, and a **complex-query admin database**.
+An agentic AI travel project built to meet the manager's requirements: multiple agents, a City Master table, Retrieval-Augmented Generation (RAG), Model Context Protocol (MCP), email notifications for new cities, stateful and stateless chat, synchronous and asynchronous APIs, and complex admin database queries.
 
-## How the manager's notes map to the code
+## Features and Architecture
 
-| Requirement (from the notes) | Where it lives |
+| Requirement | Implementation |
 |---|---|
-| ≥ 2 agents (business case: travelling) | `CityMasterAgent` (Agent 1) and `TravelRagAgent` (Agent 2) in `app/agents.py`, chosen by `Router` |
-| City table: master, city name, id, N→N | `cities`, `tags`, `city_tags` (many-to-many) in `app/database.py` |
-| "New city trigger" → email agent | SQL `TRIGGER trg_city_after_insert` writes a `city_events` row → `EmailAgent` (`app/email_agent.py`) mails `NOTIFY_EMAILS` |
-| RAG | `app/rag.py` – BM25 retrieval over the `kb_documents` table (optional LLM answer in `app/llm.py`) |
-| MCP | `app/mcp_server.py` exposes the tool layer in `app/tools.py` to any MCP client; both agents use the same tools |
-| Stateful & stateless | `POST /api/chat` with no session = stateless; `stateful:true` / `session_id` = memory in `sessions` tables |
-| API: synchronous & asynchronous | `POST /api/chat` (sync) · `POST /api/chat/async` → `GET /api/jobs/{id}` (async job) |
-| Complex database + queries, admin table | `audit_log` (admin table, filled by triggers) + `app/reports.py` (CTEs, window functions, relational division, Jaccard self-join) |
+| Multiple AI agents | `CityMasterAgent` and `TravelRagAgent` in `app/agents.py`, selected by the Router |
+| City Master database | `cities`, `tags`, and `city_tags` tables in `app/database.py`, supporting many-to-many relationships |
+| Email notification trigger | SQL trigger `trg_city_after_insert` records city events, which the Email Agent processes |
+| RAG | `app/rag.py` uses BM25 retrieval over the `kb_documents` table |
+| MCP | `app/mcp_server.py` exposes tools from `app/tools.py` to MCP clients |
+| Stateful and stateless chat | `POST /api/chat` supports stateless requests and session-based conversation memory |
+| Synchronous and asynchronous APIs | `POST /api/chat` for synchronous requests; `POST /api/chat/async` and `GET /api/jobs/{id}` for asynchronous jobs |
+| Admin database reports | `audit_log` and `app/reports.py` provide complex SQL reports using CTEs, window functions, relational division, and Jaccard similarity |
 
+## Architecture Overview
+
+```text
+User
+ |
+ v
+Router
+ |-------------------------|
+ v                         v
+City Master Agent      Travel RAG Agent
+ |                         |
+ |----------+--------------|
+            v
+         Tool Layer
+            |
+      SQLite Database
+            |
+   +--------+---------+
+   |                  |
+City tables       Knowledge base
+   |
+Insert new city
+   |
+SQL trigger
+   |
+City events
+   |
+Email Agent
+   |
+Email outbox / SMTP
 ```
-User ──► Router ──► Agent 1: City Master ──┐
-                └─► Agent 2: Travel RAG ───┤
-                                           ▼
-                           Tool layer  (also served as an MCP server)
-                                           ▼
-                SQLite: cities/tags/city_tags · kb_documents · sessions · audit_log · email_outbox
-                    │
-                    └─ INSERT INTO cities ─► trigger ─► city_events ─► Email Agent ─► email_outbox / SMTP
-```
 
-## Run it
+## Technology Stack
 
-Requires Python 3.10+.
+- Python 3.10+
+- SQLite
+- FastAPI
+- BM25 information retrieval
+- MCP SDK
+- Optional Anthropic API integration
+- Pytest
+- HTML-based web interface
+
+## Installation and Setup
+
+### 1. Navigate to the project directory
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python run.py                                          # http://127.0.0.1:8000  (UI)  ·  /docs (Swagger)
-```
-On first start it creates `data/travel.db`, loads the 8 sample travel documents in `data/knowledge/` and 5 demo cities.
-Everything works offline; no API keys are needed. Copy `.env.example` to `.env` to change settings.
-
-### Run the tests
-```bash
-python -m pytest -q          # 110 tests
+cd travel-agent-system
 ```
 
-### Try it
-```bash
-curl -X POST localhost:8000/api/chat -H 'content-type: application/json' \
-     -d '{"message":"Add city Lisbon in Portugal with tags beach, food budget 90"}'     # Agent 1 + email trigger
-curl localhost:8000/api/emails                                                           # the notification
-curl -X POST localhost:8000/api/chat -H 'content-type: application/json' \
-     -d '{"message":"Best time to visit Goa?"}'                                          # Agent 2 (RAG) with sources
-curl -X POST localhost:8000/api/chat -H 'content-type: application/json' \
-     -d '{"message":"Tell me about Tokyo","stateful":true}'                              # returns a session_id
-curl -X POST localhost:8000/api/chat -H 'content-type: application/json' \
-     -d '{"message":"What about its budget?","session_id":"<id>"}'                        # remembers Tokyo
-curl -X POST localhost:8000/api/chat/async -H 'content-type: application/json' \
-     -d '{"message":"best time to visit Jaipur"}'                                        # -> job_id
-curl localhost:8000/api/jobs/<job_id>
-curl -H 'X-Admin-Key: dev-admin-key' localhost:8000/api/admin/reports/countries         # complex query
+### 2. Create a virtual environment
+
+**Windows (Command Prompt):**
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-Example messages the agents understand: `add city X in Y with tags a, b budget 80 season winter` ·
-`find city X` · `do we have X in the database?` · `list cities in India` · `show cities with beaches` ·
-`update city X budget to 100` · `delete city X` · `how many cities?`. Anything else is a travel question for the RAG agent.
-
-Admin reports (header `X-Admin-Key`, default `dev-admin-key` – **change `ADMIN_API_KEY`**):
-`/api/admin/audit`, `/reports/countries`, `/reports/tags`, `/reports/budget`, `/reports/activity`, `/reports/emails`,
-`/reports/cities-with-tags?tags=food,culture`, `/reports/similar/{city_id}`.
-
-## MCP server
+**Linux or macOS:**
 
 ```bash
-python -m app.mcp_server        # stdio transport
+python -m venv .venv
+source .venv/bin/activate
 ```
-Claude Desktop / any MCP client config:
+
+### 3. Install dependencies
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 4. Configure environment variables
+
+Copy `.env.example` to `.env` if you need to customize the configuration. Review the available settings before enabling email delivery or optional LLM features.
+
+### 5. Run the application
+
+```bash
+python run.py
+```
+
+The application is expected to be available at:
+
+- Web interface: `http://127.0.0.1:8000`
+- API documentation: `http://127.0.0.1:8000/docs`
+
+On first startup, the application initializes `data/travel.db`, loads sample travel documents, and creates demo cities, according to the project configuration.
+
+## Running Tests
+
+Run the test suite with:
+
+```bash
+python -m pytest -q
+```
+
+The project documentation reports 110 tests. The actual test count and results should be verified by running the command locally.
+
+## API Examples
+
+### Add a city
+
+```bash
+curl -X POST http://localhost:8000/api/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"Add city Lisbon in Portugal with tags beach, food budget 90\"}"
+```
+
+### Retrieve email notifications
+
+```bash
+curl http://localhost:8000/api/emails
+```
+
+### Ask a travel question using RAG
+
+```bash
+curl -X POST http://localhost:8000/api/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"Best time to visit Goa?\"}"
+```
+
+### Start a stateful conversation
+
+```bash
+curl -X POST http://localhost:8000/api/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"Tell me about Tokyo\",\"stateful\":true}"
+```
+
+Use the returned `session_id` for subsequent requests:
+
+```bash
+curl -X POST http://localhost:8000/api/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"What about its budget?\",\"session_id\":\"YOUR_SESSION_ID\"}"
+```
+
+### Start an asynchronous request
+
+```bash
+curl -X POST http://localhost:8000/api/chat/async ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"Best time to visit Jaipur\"}"
+```
+
+Use the returned job ID to check the result:
+
+```bash
+curl http://localhost:8000/api/jobs/YOUR_JOB_ID
+```
+
+### Access admin reports
+
+```bash
+curl -H "X-Admin-Key: YOUR_ADMIN_KEY" ^
+  http://localhost:8000/api/admin/reports/countries
+```
+
+Replace `YOUR_ADMIN_KEY` with the configured admin key.
+
+## Supported City Operations
+
+The City Master Agent supports commands such as:
+
+- Add a city with its country, tags, budget, or season.
+- Find a city by name.
+- Check whether a city exists in the database.
+- List cities by country.
+- Search for cities with particular tags.
+- Update a city's budget.
+- Delete a city.
+- Count the cities in the database.
+
+Examples:
+
+```text
+Add city Lisbon in Portugal with tags beach, food budget 90
+Find city Tokyo
+List cities in India
+Show cities with beaches
+Update city Goa budget to 100
+How many cities?
+```
+
+Other travel-related questions are routed to the Travel RAG Agent.
+
+## Admin Reports
+
+Admin endpoints use the `X-Admin-Key` header. Available reports documented by the project include:
+
+- `/api/admin/audit`
+- `/api/admin/reports/countries`
+- `/api/admin/reports/tags`
+- `/api/admin/reports/budget`
+- `/api/admin/reports/activity`
+- `/api/admin/reports/emails`
+- `/api/admin/reports/cities-with-tags?tags=food,culture`
+- `/api/admin/reports/similar/{city_id}`
+
+Change the default development admin key before deploying the application.
+
+## MCP Server Setup
+
+Start the MCP server using:
+
+```bash
+python -m app.mcp_server
+```
+
+Example MCP client configuration:
+
 ```json
-{ "mcpServers": { "travel-city-master": {
-    "command": "python", "args": ["-m", "app.mcp_server"], "cwd": "/path/to/travel-agent-system" } } }
+{
+  "mcpServers": {
+    "travel-city-master": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/path/to/travel-agent-system"
+    }
+  }
+}
 ```
-Tools: `add_city`, `get_city`, `list_cities`, `update_city`, `delete_city`, `search_travel_knowledge`, `add_travel_document`.
-Adding a city through MCP also fires the email trigger. Works with `mcp` SDK v1 and v2.
 
-## Email agent
-Without `SMTP_HOST` emails are recorded in `email_outbox` with status `simulated`. Set `SMTP_*` in `.env` to send real mail;
-delivery failures are stored as `failed` and can be retried with `POST /api/emails/retry`. A failing mail never blocks city creation.
+Replace `/path/to/travel-agent-system` with the absolute path to your project directory.
 
-## Optional LLM
-Set `ANTHROPIC_API_KEY` to have the RAG agent write fluent answers from the retrieved passages. Without it (or if the call fails)
-it returns the retrieved passages directly. The LLM path is covered by tests with a fake client; it has **not** been run against the live API here.
+Available MCP tools include:
 
-## Known limits
-* Routing and city-command parsing are rule-based (predictable, offline). Unusual phrasing falls through to the RAG agent; use the REST/MCP tools for exact control.
-* Retrieval is lexical (BM25), not semantic embeddings. The sample documents are brief general guides – verify prices, visas and dates before relying on them.
-* Async jobs are kept in memory (lost on restart) and run in a thread pool; SQLite is the single-node database.
+- `add_city`
+- `get_city`
+- `list_cities`
+- `update_city`
+- `delete_city`
+- `search_travel_knowledge`
+- `add_travel_document`
 
-## Layout
+Adding a city through MCP also invokes the configured database trigger.
+
+## Email Agent
+
+When SMTP settings are not configured, notification emails are recorded in the `email_outbox` table with a simulated status.
+
+To enable real email delivery, configure the appropriate `SMTP_*` environment variables in `.env`.
+
+Failed deliveries can be recorded and retried using the application's email retry endpoint, if configured.
+
+## Optional LLM Integration
+
+Set `ANTHROPIC_API_KEY` in `.env` to enable optional LLM-generated answers based on retrieved travel passages.
+
+Without a working API configuration, the application can return retrieved passages directly, according to its fallback implementation.
+
+## Known Limitations
+
+- City-command parsing and routing use rule-based logic.
+- Travel knowledge retrieval uses lexical BM25 matching rather than semantic embeddings.
+- Sample travel documents provide general guidance; verify current prices, visa requirements, and travel restrictions independently.
+- Asynchronous jobs are held in memory and may be lost when the application restarts.
+- SQLite is intended for this project's single-node database setup.
+- Live LLM behavior and external email delivery depend on their respective configurations.
+
+## Project Structure
+
+```text
+travel-agent-system/
+├── app/
+│   ├── agents.py
+│   ├── tools.py
+│   ├── mcp_server.py
+│   ├── rag.py
+│   ├── email_agent.py
+│   ├── services.py
+│   ├── reports.py
+│   ├── database.py
+│   ├── main.py
+│   └── static/
+├── data/
+│   └── knowledge/
+├── tests/
+├── .env.example
+├── .gitignore
+├── Dockerfile
+├── requirements.txt
+├── pytest.ini
+├── run.py
+└── README.md
 ```
-app/        agents.py  tools.py  mcp_server.py  rag.py  email_agent.py  services.py  reports.py  database.py  main.py ...
-data/knowledge/   sample travel documents (title:/city: header, then text)
-tests/      unit, API, MCP (in-process and real stdio) and end-to-end tests
-```
+
+## Security Notes
+
+- Never commit `.env` files containing API keys, SMTP credentials, or other secrets.
+- Use a strong admin API key outside development.
+- Verify authentication and authorization settings before exposing admin endpoints publicly.
+
+## License
+
+Add the appropriate license information if this project is to be distributed publicly.

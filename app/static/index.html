@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Travel Multi-Agent Assistant</title>
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --ink:#1d2433; --muted:#667085; --line:#e4e7ec; --brand:#2f6fed; --ok:#12805c; --bad:#c0362c; --soft:#eef3ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1420; --card:#171d2c; --ink:#e8ecf5; --muted:#98a2b3; --line:#283046; --brand:#6d9bff; --ok:#4ade9a; --bad:#ff8a80; --soft:#1c2540; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 20px 12px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:19px; }
+  .flow { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; font-size:12px; }
+  .flow span { background:var(--soft); color:var(--brand); border-radius:99px; padding:3px 11px; font-weight:600; }
+  main { max-width:1180px; margin:0 auto; padding:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:880px) { main { grid-template-columns:1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  section.wide { grid-column:1 / -1; }
+  h2 { margin:0 0 4px; font-size:16px; }
+  h2 .n { display:inline-grid; place-items:center; width:24px; height:24px; border-radius:50%; background:var(--brand); color:#fff; font-size:13px; margin-right:8px; }
+  .hint { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin:8px 0 3px; }
+  input, select, textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
+  textarea { min-height:90px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { padding:9px 16px; border:0; border-radius:8px; background:var(--brand); color:#fff; font-weight:600; cursor:pointer; margin-top:12px; }
+  button.ghost { background:transparent; color:var(--brand); border:1px solid var(--line); margin-top:0; padding:4px 10px; font-size:12px; }
+  button.danger { color:var(--bad); }
+  .result { margin-top:10px; padding:9px 11px; border-radius:8px; font-size:13px; white-space:pre-wrap; display:none; }
+  .result.ok { display:block; background:rgba(18,128,92,.12); color:var(--ok); }
+  .result.err { display:block; background:rgba(192,54,44,.12); color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 5px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  .pill { display:inline-block; padding:0 8px; border-radius:99px; font-size:11px; border:1px solid var(--line); color:var(--muted); margin:1px; }
+  .simulated, .sent { color:var(--ok); font-weight:600; } .failed { color:var(--bad); font-weight:600; }
+  .chips button { margin:6px 6px 0 0; }
+  .scroll { max-height:300px; overflow:auto; }
+  .opts { display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; }
+  .opts label { display:flex; align-items:center; gap:6px; margin:0; font-weight:500; }
+  .opts input { width:auto; }
+  .answer { margin-top:12px; padding:12px; border-radius:8px; background:var(--soft); white-space:pre-wrap; display:none; }
+  .answer .meta { color:var(--muted); font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Travel Multi-Agent Assistant</h1>
+  <div class="flow">
+    <span>1 Add a city</span> <span>&rarr; 2 Email agent notifies</span> <span>&rarr; 3 Add travel knowledge</span>
+    <span>&rarr; 4 Ask a question (RAG)</span> <span>&rarr; 5 Admin reports</span>
+  </div>
+</header>
+
+<main>
+  <!-- STEP 1 -->
+  <section>
+    <h2><span class="n">1</span>Add a city &mdash; City Master agent</h2>
+    <p class="hint">Fill the form and press the button. A new city automatically triggers the Email agent (step 2).</p>
+    <form id="cityForm">
+      <div class="row">
+        <div><label for="c_name">City name *</label><input id="c_name" required placeholder="Lisbon"></div>
+        <div><label for="c_country">Country</label><input id="c_country" placeholder="Portugal"></div>
+      </div>
+      <label for="c_tags">Tags (comma separated)</label><input id="c_tags" placeholder="beach, food, history">
+      <div class="row">
+        <div><label for="c_budget">Daily budget (USD)</label><input id="c_budget" type="number" min="0" step="1" placeholder="90"></div>
+        <div><label for="c_season">Best season</label><input id="c_season" placeholder="April-June"></div>
+      </div>
+      <button type="submit">Add city</button>
+      <div class="result" id="cityRes"></div>
+    </form>
+  </section>
+
+  <!-- STEP 2 -->
+  <section>
+    <h2><span class="n">2</span>Email agent &mdash; outbox</h2>
+    <p class="hint">One email per notify address is created for each new city. Without SMTP settings they show as <b>simulated</b>.</p>
+    <div class="scroll"><table><thead><tr><th>Subject</th><th>To</th><th>Status</th></tr></thead><tbody id="emails"></tbody></table></div>
+    <button class="ghost" id="reloadEmails" style="margin-top:10px">Refresh</button>
+  </section>
+
+  <!-- CITY TABLE -->
+  <section class="wide">
+    <h2>City Master table</h2>
+    <p class="hint">All cities in the database. Use Delete to remove one.</p>
+    <div class="scroll"><table><thead><tr><th>ID</th><th>City</th><th>Country</th><th>Budget/day</th><th>Season</th><th>Tags</th><th></th></tr></thead><tbody id="cities"></tbody></table></div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section>
+    <h2><span class="n">3</span>Add travel knowledge &mdash; feeds the RAG agent</h2>
+    <p class="hint">Paste any travel text (guide, tips, rules). The RAG agent will answer from it.</p>
+    <form id="kbForm">
+      <label for="k_city">About which city?</label>
+      <select id="k_city"><option value="">General (not a specific city)</option></select>
+      <label for="k_title">Title *</label><input id="k_title" required placeholder="Lisbon Guide">
+      <label for="k_content">Text * (at least 10 characters)</label>
+      <textarea id="k_content" required placeholder="Lisbon is best visited in spring and early autumn. Tram 28 is a classic ride."></textarea>
+      <button type="submit">Save knowledge</button>
+      <div class="result" id="kbRes"></div>
+    </form>
+  </section>
+
+  <!-- STEP 4 -->
+  <section>
+    <h2><span class="n">4</span>Ask a question &mdash; the router picks the agent</h2>
+    <p class="hint">Ask a travel question, or type a city command like <i>delete city Lisbon</i>. Click an example to fill the box.</p>
+    <form id="askForm">
+      <input id="q" required placeholder="Best time to visit Goa?" autocomplete="off">
+      <div class="opts">
+        <label><input type="checkbox" id="stateful"> Remember context (stateful)</label>
+        <label><input type="checkbox" id="async"> Run as async job</label>
+        <button type="button" class="ghost" id="newSession">New session</button>
+      </div>
+      <button type="submit">Ask</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <div class="answer" id="answer"></div>
+  </section>
+
+ 
+  
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let sessionId = null;
+let cityCache = [];
+
+function show(el, ok, text) { el.className = "result " + (ok ? "ok" : "err"); el.textContent = text; }
+function errText(body, status) {
+  const d = body && body.detail;
+  if (Array.isArray(d)) return d.map((e) => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("; ");
+  return d || `Request failed (${status})`;
+}
+async function api(method, url, body, headers) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json", ...(headers || {}) }, body: body ? JSON.stringify(body) : undefined });
+  let data = null; try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(errText(data, r.status));
+  return data;
+}
+
+/* ---------- tables ---------- */
+async function loadCities() {
+  cityCache = await api("GET", "/api/cities");
+  $("cities").innerHTML = cityCache.length ? cityCache.map((c) => `<tr>
+      <td>${c.id}</td><td><b>${esc(c.name)}</b></td><td>${esc(c.country)}</td>
+      <td>${c.avg_daily_budget_usd ?? "-"}</td><td>${esc(c.best_season) || "-"}</td>
+      <td>${c.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join("")}</td>
+      <td><button class="ghost danger" data-del="${c.id}">Delete</button></td></tr>`).join("")
+    : '<tr><td colspan="7">No cities yet - add one in step 1.</td></tr>';
+  const opts = cityCache.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  const keep = $("k_city").value;
+  $("k_city").innerHTML = '<option value="">General (not a specific city)</option>' + opts;
+  $("k_city").value = keep;
+  const keepR = $("r_city").value;
+  $("r_city").innerHTML = cityCache.map((c) => `<option value="${c.id}">${esc(c.name)}${c.country ? ", " + esc(c.country) : ""}</option>`).join("");
+  if (keepR) $("r_city").value = keepR;
+}
+async function loadEmails() {
+  const rows = await api("GET", "/api/emails?limit=15");
+  $("emails").innerHTML = rows.length ? rows.map((e) => `<tr><td>${esc(e.subject)}</td><td>${esc(e.to_addr)}</td><td class="${e.status}">${e.status}</td></tr>`).join("")
+    : '<tr><td colspan="3">No emails yet - add a city in step 1.</td></tr>';
+}
+$("cities").onclick = async (e) => {
+  const id = e.target.dataset && e.target.dataset.del;
+  if (!id || !confirm("Delete this city?")) return;
+  try { await api("DELETE", `/api/cities/${id}`); } catch (err) { alert(err.message); }
+  loadCities();
+};
+$("reloadEmails").onclick = loadEmails;
+
+/* ---------- step 1: add city ---------- */
+$("cityForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const budget = $("c_budget").value;
+  const body = {
+    name: $("c_name").value.trim(), country: $("c_country").value.trim(), best_season: $("c_season").value.trim(),
+    tags: $("c_tags").value.split(",").map((t) => t.trim()).filter(Boolean),
+    avg_daily_budget_usd: budget === "" ? null : Number(budget),
+  };
+  try {
+    const c = await api("POST", "/api/cities", body);
+    show($("cityRes"), true, `Added "${c.name}" (id ${c.id}). The Email agent has been notified - see step 2.`);
+    $("cityForm").reset();
+    await Promise.all([loadCities(), loadEmails()]);
+  } catch (err) { show($("cityRes"), false, err.message); }
+};
+
+/* ---------- step 3: add knowledge ---------- */
+$("kbForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = { title: $("k_title").value.trim(), content: $("k_content").value.trim(), city: $("k_city").value || null };
+  try {
+    const d = await api("POST", "/api/knowledge", body);
+    show($("kbRes"), true, `Saved "${d.title}". Now ask a question about it in step 4.`);
+    $("k_title").value = ""; $("k_content").value = "";
+  } catch (err) { show($("kbRes"), false, err.message); }
+};
+
+/* ---------- step 4: ask ---------- */
+const examples = ["Best time to visit Goa?", "What is the budget for Paris?", "How do I get a Schengen visa?", "List all cities",
+                  "Show me cities with beaches", "How many cities?", "Tell me about Tokyo", "What about its budget?"];
+$("chips").innerHTML = examples.map((s) => `<button type="button" class="ghost">${esc(s)}</button>`).join("");
+$("chips").onclick = (e) => { if (e.target.tagName === "BUTTON") { $("q").value = e.target.textContent; $("q").focus(); } };
+$("newSession").onclick = () => { sessionId = null; $("newSession").textContent = "New session (started)"; setTimeout(() => ($("newSession").textContent = "New session"), 1500); };
+
+async function pollJob(id) {
+  for (let i = 0; i < 80; i++) {
+    const j = await api("GET", `/api/jobs/${id}`);
+    if (j.status === "done") return j.result;
+    if (j.status === "failed") throw new Error(j.error);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error("Job timed out");
+}
+$("askForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = { message: $("q").value.trim(), stateful: $("stateful").checked, session_id: $("stateful").checked ? sessionId : null };
+  const box = $("answer"); box.style.display = "block"; box.textContent = "Thinking...";
+  try {
+    let data;
+    if ($("async").checked) data = await pollJob((await api("POST", "/api/chat/async", body)).job_id);
+    else data = await api("POST", "/api/chat", body);
+    if (data.session_id) sessionId = data.session_id;
+    const srcs = [...new Set((data.sources || []).map((s) => s.title))];
+    box.innerHTML = `${esc(data.reply)}<div class="meta">Agent: ${esc(data.agent)} &middot; intent: ${esc(data.intent)}`
+      + (srcs.length ? ` &middot; sources: ${esc(srcs.join(", "))}` : "")
+      + (data.session_id ? ` &middot; session ${esc(data.session_id.slice(0, 8))}` : " &middot; stateless")
+      + ($("async").checked ? " &middot; via async job" : "") + `</div>`;
+    loadCities(); loadEmails();
+  } catch (err) { box.innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
+};
+
+/* ---------- step 5: reports ---------- */
+function renderTable(rows) {
+  if (!rows.length) return '<tbody><tr><td>No data.</td></tr></tbody>';
+  const cols = Object.keys(rows[0]);
+  return `<thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`
+    + rows.map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c])}</td>`).join("")}</tr>`).join("") + "</tbody>";
+}
+$("runReport").onclick = async () => {
+  let path = $("r_pick").value;
+  if (path === "reports/cities-with-tags") path += "?tags=" + encodeURIComponent($("r_tags").value);
+  if (path === "reports/similar") {
+    if (!$("r_city").value) { show($("repRes"), false, "Add a city first."); return; }
+    path += "/" + $("r_city").value;
+  }
+  try {
+    const rows = await api("GET", `/api/admin/${path}`, null, { "X-Admin-Key": $("r_key").value });
+    $("repRes").className = "result"; $("repTable").innerHTML = renderTable(rows);
+  } catch (err) { show($("repRes"), false, err.message); $("repTable").innerHTML = ""; }
+};
+
+loadCities(); loadEmails();
+</script>
+</body>
+</html>
